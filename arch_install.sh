@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Arch Linux Installation Script
-# 作者：[您的名字]
-# 创建日期：$(date '+%Y-%m-%d')
+# 作者：Groveer
+# 创建日期：2024-11-18
 # 描述：自动化 Arch Linux 安装脚本
 
 # 错误处理
