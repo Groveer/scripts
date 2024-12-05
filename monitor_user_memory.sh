@@ -21,5 +21,10 @@ USER_SLICE="user.slice/user-$USER_ID.slice"
 
 # Use systemd-cgtop to monitor memory usage for the user slice
 echo "Monitoring memory usage for $USER_SLICE..."
-systemd-cgtop -m "$USER_SLICE"
+while true; do
+    echo "$(date)" >> 1.log
+    systemd-cgtop -m "$USER_SLICE" >> 1.log
+    echo "Printed the log to 1.log"
+    sleep 1
+done
 
