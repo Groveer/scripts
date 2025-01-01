@@ -355,8 +355,6 @@ setup_network() {
                 fi
                 arch-chroot /mnt systemctl enable NetworkManager
 
-                # 配置 DNS
-                arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf || true
                 echo "NetworkManager installed"
                 break
                 ;;
@@ -365,7 +363,8 @@ setup_network() {
                 arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved
 
                 # 配置 DNS
-                arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+                rm -f /mnt/etc/resolv.conf
+                arch-chroot /mnt ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
                 # 询问是否需要无线网络支持
                 read -p "need wireless support? (y/n) " wireless_support
@@ -430,6 +429,7 @@ setup_localization() {
 
     # 设置时区
     echo "configure timezone..."
+    rm -f /mnt/etc/localtime
     arch-chroot /mnt ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
     arch-chroot /mnt hwclock --systohc
 
