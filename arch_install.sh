@@ -75,55 +75,6 @@ show_progress() {
     fi
 }
 
-# 检查安装结果
-verify_installation() {
-    echo "verify installation..."
-    local errors=0
-
-    # 检查关键文件和目录
-    local check_paths=(
-        "/mnt/boot/EFI/Linux/arch-linux.efi"
-        "/mnt/etc/fstab"
-        "/mnt/etc/hostname"
-        "/mnt/etc/locale.gen"
-        "/mnt/etc/locale.conf"
-        "/mnt/etc/hosts"
-    )
-
-    for path in "${check_paths[@]}"; do
-        if [ ! -e "$path" ]; then
-            echo "error: missing file or directory: $path"
-            ((errors++))
-        fi
-    done
-
-    # 检查用户设置
-    if ! arch-chroot /mnt id "$username" >/dev/null 2>&1; then
-        echo "error: user not created: $username"
-        ((errors++))
-    fi
-
-    # 检查网络配置
-    if [ ! -e "/mnt/etc/systemd/network" ] && [ ! -e "/mnt/etc/NetworkManager" ]; then
-        echo "error: network configuration not found"
-        ((errors++))
-    fi
-
-    # 检查引导配置
-    if ! arch-chroot /mnt efibootmgr | grep "Arch Linux" >/dev/null; then
-        echo "error: boot entry not found"
-        ((errors++))
-    fi
-
-    if [ "$errors" -eq 0 ]; then
-        echo "installation verified: no errors found"
-        return 0
-    else
-        echo "installation verification failed: $errors errors found"
-        return 1
-    fi
-}
-
 # 更新镜像源
 update_mirrors() {
     echo "update mirrors..."
@@ -921,16 +872,7 @@ main() {
     show_progress $((++current_step)) "$total_steps" "generate fstab"
     generate_fstab
 
-    # 验证安装
-    if ! verify_installation; then
-        echo "warning: installation verification failed"
-        echo "please check the error messages and try again"
-        read -p "do you want to continue? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
+    echo "installation completed!"
 }
 
 # 运行主函数
