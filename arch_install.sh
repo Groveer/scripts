@@ -786,7 +786,7 @@ setup_users() {
 # 设置用户目录绑定挂载
 setup_user_dirs() {
     # 检查是否设置了数据盘
-    if [ -z "$DATA_PARTITION" ]; then
+    if [ -z "${DATA_PARTITION:-}" ]; then
         return
     fi
 
