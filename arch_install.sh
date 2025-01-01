@@ -356,7 +356,7 @@ setup_network() {
                 arch-chroot /mnt systemctl enable NetworkManager
 
                 # 配置 DNS
-                arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+                arch-chroot /mnt ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf || true
                 echo "NetworkManager installed"
                 break
                 ;;
@@ -521,9 +521,11 @@ EOF
     arch-chroot /mnt mkinitcpio -P || die "cannot generate UKI"
 
     # 添加 EFI 启动项
-    arch-chroot /mnt efibootmgr --create --disk "${DISK}" --part "${EFI_PART_NUM}" \
+    efibootmgr --create --disk "${DISK}" --part 1 \
         --label "Arch Linux" --loader "\\EFI\\Linux\\arch-linux.efi" \
         --unicode || die "cannot create UKI boot entry"
+
+    rm /mnt/boot/*.img
 
     echo "UKI setup completed"
 }
@@ -541,7 +543,7 @@ setup_systemd_boot() {
     # 创建 loader.conf
     cat > /mnt/boot/loader/loader.conf << EOF
 default  arch.conf
-timeout  4
+timeout  3
 console-mode max
 editor   no
 EOF
