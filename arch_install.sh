@@ -54,12 +54,12 @@ check_environment() {
     local required_tools=("sgdisk" "mkfs.fat" "mkfs.f2fs" "arch-chroot" "pacstrap" "genfstab")
     for tool in "${required_tools[@]}"; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            echo "errot: not found tool: $tool"
+            echo "error: not found tool: $tool"
             exit 1
         fi
     done
 
-    echo "environment check passed"
+    echo "environment check passed!!!"
 }
 
 # 显示进度
@@ -89,7 +89,7 @@ Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.jlu.edu.cn/archlinux/\$repo/os/\$arch
 EOF
 
-    echo "mirrors updated"
+    echo "mirrors updated!!!"
 }
 
 # 列出可用磁盘并让用户选择
@@ -164,7 +164,7 @@ format_partitions() {
         exit 1
     fi
 
-    echo "partitions formatted"
+    echo "partitions formatted!!!"
 }
 
 # 添加数据盘
@@ -196,26 +196,9 @@ add_data_disk() {
             echo "you choosed $data_disk"
             read -p "warning: this will erase all data on $data_disk, are you sure to continue? (y/n) " confirm
             if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-                # 创建新的 GPT 分区表
-                sgdisk -Z "$data_disk"
-                sgdisk -o "$data_disk"
-
-                # 创建单个分区使用整个磁盘
-                sgdisk -n 1:0:0 -t 1:8300 -c 1:"Linux Data" "$data_disk"
-
-                # 等待内核更新分区表
-                sleep 2
-
-                # 确定分区名称
-                if [[ $data_disk == *"nvme"* ]]; then
-                    DATA_PARTITION="${data_disk}p1"
-                else
-                    DATA_PARTITION="${data_disk}1"
-                fi
-
                 # 格式化为 XFS
                 echo "format data disk..."
-                mkfs.xfs -f -L "Data" "$DATA_PARTITION"
+                mkfs.xfs -f -L "Data" "$data_disk"
                 echo "data disk formatted"
                 break
             fi
@@ -230,36 +213,36 @@ setup_mountpoints() {
     echo "setup mountpoints..."
 
     # 挂载根分区
-    mount -o compress_algorithm=zstd:6,compress_chksum,atgc,gc_merge,lazytime "${ROOT_PARTITION}" /mnt || die "cannot mount root partition"
+    mount -o compress_algorithm=zstd:6,compress_chksum,atgc,gc_merge,lazytime "${ROOT_PARTITION}" /mnt || echo "cannot mount root partition"
 
     # 创建并挂载 EFI 分区
-    mkdir -p /mnt/boot || die "cannot create boot directory"
-    mount "${EFI_PARTITION}" /mnt/boot || die "cannot mount EFI partition"
+    mkdir -p /mnt/boot || echo "cannot create boot directory"
+    mount "${EFI_PARTITION}" /mnt/boot || echo "cannot mount EFI partition"
 
     # 创建必要的目录
-    mkdir -p /mnt/boot/EFI/Linux || die "cannot create Linux directory"
-    mkdir -p /mnt/var || die "cannot create var directory"
+    mkdir -p /mnt/boot/EFI/Linux || echo "cannot create Linux directory"
+    mkdir -p /mnt/var || echo "cannot create var directory"
 
     # 如果设置了数据盘，进行额外的挂载
-    if [ -n "${DATA_PARTITION:-}" ]; then
+    if [ -n "${data_disk:-}" ]; then
         echo "add data disk..."
 
         # 创建数据盘挂载点
-        mkdir -p /mnt/mnt || die "cannot create data disk mountpoint"
+        mkdir -p /mnt/mnt || echo "cannot create data disk mountpoint"
 
         # 挂载数据盘
-        mount "${DATA_PARTITION}" /mnt/mnt || die "cannot mount data disk"
+        mount "${data_disk}" /mnt/mnt || echo "cannot mount data disk"
 
         # 创建数据盘上的 var 目录
-        mkdir -p /mnt/mnt/var || die "cannot create var directory on data disk"
+        mkdir -p /mnt/mnt/var || echo "cannot create var directory on data disk"
 
         # 绑定挂载 var 目录
-        mount --bind /mnt/mnt/var /mnt/var || die "cannot bind mount var directory"
+        mount --bind /mnt/mnt/var /mnt/var || echo "cannot bind mount var directory"
 
         echo "data disk mounted"
     fi
 
-    echo "mountpoints setup completed"
+    echo "mountpoints setup completed!!!"
 
     # 显示当前挂载情况
     echo "current mountpoints:"
@@ -283,7 +266,7 @@ install_base_system() {
     sed -i 's/MODULES=()/MODULES=(f2fs)/' /mnt/etc/mkinitcpio.conf
     arch-chroot /mnt mkinitcpio -P
 
-    echo "base system installed"
+    echo "base system installed!!!"
 }
 
 # 配置网络
@@ -371,7 +354,7 @@ EOF
         esac
     done
 
-    echo "network setup completed"
+    echo "network setup completed!!!"
 }
 
 # 配置本地化设置
@@ -411,13 +394,13 @@ setup_localization() {
     fi
 
     # 创建 vconsole.conf
-    echo "创建 vconsole.conf..."
+    echo "create vconsole.conf..."
     cat > /mnt/etc/vconsole.conf << EOF
 FONT=ter-u16n
 FONT_MAP=8859-2
 EOF
 
-    echo "localization setup completed"
+    echo "localization setup completed!!!"
 }
 
 # 配置主机名和hosts
@@ -440,7 +423,7 @@ setup_hostname() {
 127.0.1.1   $hostname.localdomain
 EOF
 
-    echo "hostname and hosts setup completed"
+    echo "hostname and hosts setup completed!!!"
 }
 
 # 安装和配置 UKI (Unified Kernel Image)
@@ -448,13 +431,14 @@ setup_uki() {
     echo "setup UKI..."
 
     # 确保目录存在
-    arch-chroot /mnt mkdir -p /boot/EFI/Linux || die "cannot create UKI directory"
+    arch-chroot /mnt mkdir -p /boot/EFI/Linux || echo "cannot create UKI directory"
+    mkdir -p /mnt/etc/cmdline.d || echo "cannot create cmdline.d directory"
 
     # 创建 kernel cmdline
-    echo "root=PARTUUID=$(blkid -s PARTUUID -o value ${ROOT_PARTITION}) rw rootflags=compress_algorithm=zstd:6,compress_chksum,atgc,gc_merge,lazytime loglevel=3 quiet" > /mnt/etc/kernel/cmdline || die "cannot create kernel cmdline"
+    echo "root=UUID=$(blkid -s UUID -o value ${ROOT_PARTITION}) rw rootflags=atgc quiet" > /mnt/etc/cmdline.d/root.conf || echo "cannot create kernel cmdline"
 
     # 创建 mkinitcpio preset
-    cat > /mnt/etc/mkinitcpio.d/linux.preset << EOF || die "cannot create mkinitcpio preset"
+    cat > /mnt/etc/mkinitcpio.d/linux.preset << EOF
 # mkinitcpio preset file for the 'linux' package
 
 #ALL_config="/etc/mkinitcpio.conf"
@@ -469,16 +453,16 @@ default_options="--splash /usr/share/systemd/bootctl/splash-arch.bmp"
 EOF
 
     # 生成 UKI
-    arch-chroot /mnt mkinitcpio -P || die "cannot generate UKI"
+    arch-chroot /mnt mkinitcpio -P || echo "cannot generate UKI"
 
     # 添加 EFI 启动项
     efibootmgr --create --disk "${DISK}" --part 1 \
         --label "Arch Linux" --loader "\\EFI\\Linux\\arch-linux.efi" \
-        --unicode || die "cannot create UKI boot entry"
+        --unicode || echo "cannot create UKI boot entry"
 
     rm /mnt/boot/*.img
 
-    echo "UKI setup completed"
+    echo "UKI setup completed!!!"
 }
 
 # 配置 systemd-boot
@@ -486,7 +470,7 @@ setup_systemd_boot() {
     echo "setup systemd-boot..."
 
     # 安装 systemd-boot
-    arch-chroot /mnt bootctl install || die "cannot install systemd-boot"
+    arch-chroot /mnt bootctl install || echo "cannot install systemd-boot"
 
     # 创建启动项配置
     mkdir -p /mnt/boot/loader/entries
@@ -507,7 +491,7 @@ initrd  /initramfs-linux.img
 options root=PARTUUID=$(blkid -s PARTUUID -o value ${ROOT_PARTITION}) rw rootflags=compress_algorithm=zstd:6,compress_chksum,atgc,gc_merge,lazytime loglevel=3 quiet
 EOF
 
-    echo "systemd-boot setup completed"
+    echo "systemd-boot setup completed!!!"
 }
 
 # 配置 GRUB
@@ -515,10 +499,10 @@ setup_grub() {
     echo "setup GRUB..."
 
     # 安装必要的包
-    arch-chroot /mnt pacman -S --noconfirm grub efibootmgr || die "cannot install GRUB"
+    arch-chroot /mnt pacman -S --noconfirm grub efibootmgr || echo "cannot install GRUB"
 
     # 安装 GRUB
-    arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB || die "cannot grub-install"
+    arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB || echo "cannot grub-install"
 
     # 配置 GRUB 默认设置
     sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=2/' /mnt/etc/default/grub
@@ -530,9 +514,9 @@ setup_grub() {
     sed -i "s|GRUB_CMDLINE_LINUX=\"\"|GRUB_CMDLINE_LINUX=\"$root_options\"|" /mnt/etc/default/grub
 
     # 生成 GRUB 配置
-    arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg || die "cannot generate GRUB config"
+    arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg || echo "cannot generate GRUB config"
 
-    echo "GRUB setup completed"
+    echo "GRUB setup completed!!!"
 }
 
 # 配置引导程序
@@ -593,7 +577,7 @@ install_microcode() {
         esac
     done
 
-    echo "CPU microcode installed"
+    echo "CPU microcode installed!!!"
 }
 
 # 安装和配置NVIDIA驱动
@@ -614,19 +598,19 @@ setup_nvidia() {
             arch-chroot /mnt pacman -S --noconfirm nvidia nvidia-utils nvidia-settings
             ;;
         *)
-            echo "skip NVIDIA driver installation"
+            echo "skip NVIDIA driver installation!!!"
             return
             ;;
     esac
 
     # 配置 mkinitcpio.conf
     echo "configure mkinitcpio.conf..."
-    sed -i 's/^MODULES=.*/MODULES=(f2fs nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /mnt/etc/mkinitcpio.conf
+    sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /mnt/etc/mkinitcpio.conf
 
     # 更新内核启动参数
     local kernel_params="ibt=off nvidia_drm.modeset=1"
 
-    case "$BOOTLOADER" in
+    case "${bootloader_choice:-1}" in
         "systemd-boot")
             # 更新 systemd-boot 配置
             sed -i "/^options/ s|$| ${kernel_params}|" /mnt/boot/loader/entries/arch.conf
@@ -646,7 +630,7 @@ setup_nvidia() {
     # 重新生成 initramfs
     arch-chroot /mnt mkinitcpio -P
 
-    echo "NVIDIA driver setup completed"
+    echo "NVIDIA driver setup completed!!!"
 }
 
 # 配置archlinuxcn源
@@ -665,7 +649,7 @@ EOF
     arch-chroot /mnt pacman -Sy --noconfirm archlinuxcn-keyring
     arch-chroot /mnt pacman -S --noconfirm yay
 
-    echo "archlinuxcn setup completed"
+    echo "archlinuxcn setup completed!!!"
 }
 
 # 设置用户和密码
@@ -708,16 +692,6 @@ setup_users() {
         exit 1
     fi
 
-    # 设置 root 密码
-    echo "set root password..."
-    while true; do
-        echo "please input root password:"
-        if arch-chroot /mnt passwd; then
-            break
-        fi
-        echo "error: set root password failed"
-    done
-
     # 设置新用户密码
     echo "set password for user: $username..."
     while true; do
@@ -728,16 +702,26 @@ setup_users() {
         echo "error: set password for user failed"
     done
 
+    # 设置 root 密码
+    echo "set root password..."
+    while true; do
+        echo "please input root password:"
+        if arch-chroot /mnt passwd; then
+            break
+        fi
+        echo "error: set root password failed"
+    done
+
     # 设置用户目录绑定挂载
     setup_user_dirs "$username"
 
-    echo "users setup completed"
+    echo "users setup completed!!!"
 }
 
 # 设置用户目录绑定挂载
 setup_user_dirs() {
     # 检查是否设置了数据盘
-    if [ -z "${DATA_PARTITION:-}" ]; then
+    if [ -z "${data_disk:-}" ]; then
         return
     fi
 
@@ -746,12 +730,6 @@ setup_user_dirs() {
 
     # 默认要绑定的目录
     local default_dirs=(".cache" "Downloads" "Documents" "Pictures")
-
-    # 在数据盘上创建用户目录
-    if ! mkdir -p "/mnt/mnt/$username"; then
-        echo "error: create data disk directory failed"
-        exit 1
-    fi
 
     # 询问用户是否需要添加其他目录
     read -p "do you want to add additional directories to bind mount? (separate multiple directories with space, press Enter to skip): " additional_dirs
@@ -779,21 +757,14 @@ setup_user_dirs() {
             continue
         fi
 
-        # 设置目录权限
-        chown -R "$username:$username" "/mnt/mnt/$username/$dir"
-        chown -R "$username:$username" "/mnt/home/$username/$dir"
-        chmod 700 "/mnt/mnt/$username/$dir"
-        chmod 700 "/mnt/home/$username/$dir"
-
-        # 添加到 fstab
-        echo "/mnt/$username/$dir /home/$username/$dir none bind 0 0" >> /mnt/etc/fstab
+        mount --bind "/mnt/mnt/$username/$dir" "/mnt/home/$username/$dir"
     done
 
     # 设置数据盘用户目录的权限
     chown -R "$username:$username" "/mnt/mnt/$username"
     chmod 700 "/mnt/mnt/$username"
 
-    echo "user directories setup completed"
+    echo "user directories setup completed!!!"
 }
 
 # 生成 fstab
@@ -803,7 +774,7 @@ generate_fstab() {
         echo "error: generate fstab failed"
         exit 1
     fi
-    echo "fstab generated"
+    echo "fstab generated!!!"
 }
 
 # 开始安装过程
