@@ -256,7 +256,7 @@ install_base_system() {
     echo "install base system..."
 
     # 安装基本包
-    if ! pacstrap /mnt base base-devel linux linux-firmware neovim f2fs-tools; then
+    if ! pacstrap /mnt base base-devel linux linux-firmware neovim f2fs-tools zsh; then
         echo "error: base system installation failed"
         exit 1
     fi
@@ -680,7 +680,7 @@ setup_users() {
 
     # 创建新用户
     echo "create user: $username..."
-    if ! arch-chroot /mnt useradd -m -G wheel,audio,video,storage,optical,network -s /bin/zsh "$username"; then
+    if ! arch-chroot /mnt useradd -m -G wheel -s /bin/zsh "$username"; then
         echo "error: create user failed"
         exit 1
     fi
@@ -761,7 +761,7 @@ setup_user_dirs() {
     done
 
     # 设置数据盘用户目录的权限
-    chown -R "$username:$username" "/mnt/mnt/$username"
+    arch-chroot /mnt chown -R "$username:wheel" "/mnt/$username"
     chmod 700 "/mnt/mnt/$username"
 
     echo "user directories setup completed!!!"
@@ -770,10 +770,7 @@ setup_user_dirs() {
 # 生成 fstab
 generate_fstab() {
     echo "generate fstab..."
-    if ! genfstab -U /mnt >> /mnt/etc/fstab; then
-        echo "error: generate fstab failed"
-        exit 1
-    fi
+    genfstab -U /mnt >> /mnt/etc/fstab
     echo "fstab generated!!!"
 }
 
