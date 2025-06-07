@@ -7,8 +7,8 @@
 # 脚本权限要求：root
 
 # 错误处理
-set -e  # 遇到错误立即退出
-set -u  # 使用未定义的变量时报错
+set -e # 遇到错误立即退出
+set -u # 使用未定义的变量时报错
 
 # 清理函数
 cleanup() {
@@ -18,15 +18,6 @@ cleanup() {
     umount -R /mnt 2>/dev/null || true
     exit $exit_code
 }
-
-# 设置清理钩子
-trap cleanup EXIT
-
-# 检查是否以 root 权限运行
-if [ "$(id -u)" -ne 0 ]; then
-    echo "error：must be run as root"
-    exit 1
-fi
 
 # 检查系统环境
 check_environment() {
@@ -82,10 +73,10 @@ update_mirrors() {
     cp /etc/pacman.d/mirrorlist /etc/pacman.d/mirrorlist.backup
 
     # 写入新的镜像源
-    cat > /etc/pacman.d/mirrorlist << EOF
+    cat >/etc/pacman.d/mirrorlist <<EOF
+Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.xjtu.edu.cn/archlinux/\$repo/os/\$arch
-Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.jlu.edu.cn/archlinux/\$repo/os/\$arch
 EOF
 
@@ -96,12 +87,16 @@ EOF
 select_disk() {
     echo "choose disk..."
     echo "----------------"
-    lsblk -d -p -n -l -o NAME,SIZE,MODEL
+    mapfile -t disks < <(lsblk -d -p -n -l -o NAME,SIZE,MODEL)
+    for i in "${!disks[@]}"; do
+        printf "%2d) %s\n" "$((i + 1))" "${disks[$i]}"
+    done
     echo "----------------"
 
     while true; do
-        read -p "please input the disk you want to install (e.g. /dev/sda): " selected_disk
-        if [ -b "$selected_disk" ]; then
+        read -p "please input the disk number you want to install (e.g. 1): " disk_index
+        if [[ "$disk_index" =~ ^[0-9]+$ ]] && [ "$disk_index" -ge 1 ] && [ "$disk_index" -le "${#disks[@]}" ]; then
+            selected_disk=$(echo "${disks[$((disk_index - 1))]}" | awk '{print $1}')
             echo "you choosed $selected_disk"
             # 再次确认
             read -p "warning: this will erase all data on $selected_disk, are you sure to continue? (y/n) " confirm
@@ -109,7 +104,7 @@ select_disk() {
                 break
             fi
         else
-            echo "error: invalid disk device, please choose again"
+            echo "error: invalid disk number, please choose again"
         fi
     done
     DISK=$selected_disk
@@ -180,20 +175,33 @@ add_data_disk() {
         echo "error: invalid input, please input y/n"
     done
 
-    echo "please choose a disk for data (don't choose the disk $DISK used for system installation)"
+    echo "please choose a disk for data"
     echo "available disks:"
     echo "----------------"
-    lsblk -d -p -n -l -o NAME,SIZE,MODEL
+    mapfile -t disks < <(lsblk -d -p -n -l -o NAME,SIZE,MODEL | grep -v "^$DISK ")
+    for i in "${!disks[@]}"; do
+        idx=$((i + 1))
+        echo "$idx) ${disks[$i]}"
+    done
     echo "----------------"
 
     while true; do
-        read -p "please input the disk you want to use as data disk (e.g. /dev/sdb): " data_disk
+        read -p "please input the number of the disk you want to use as data disk: " disk_idx
+        if ! [[ "$disk_idx" =~ ^[0-9]+$ ]]; then
+            echo "error: please enter a valid number"
+            continue
+        fi
+        if ((disk_idx < 1 || disk_idx > ${#disks[@]})); then
+            echo "error: number out of range, please choose again"
+            continue
+        fi
+        data_disk=$(echo "${disks[$((disk_idx - 1))]}" | awk '{print $1}')
         if [ "$data_disk" = "$DISK" ]; then
             echo "error: invalid disk, please choose another disk"
             continue
         fi
+        echo "you choosed $data_disk"
         if [ -b "$data_disk" ]; then
-            echo "you choosed $data_disk"
             read -p "warning: this will erase all data on $data_disk, are you sure to continue? (y/n) " confirm
             if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
                 # 格式化为 XFS
@@ -281,62 +289,68 @@ setup_network() {
         read -p "please choose network manager (1 or 2): " network_choice
 
         case $network_choice in
-            1)
-                echo "install NetworkManager..."
-                if ! arch-chroot /mnt pacman -S --noconfirm networkmanager; then
-                    echo "error: NetworkManager installation failed"
+        1)
+            echo "install NetworkManager..."
+            if ! arch-chroot /mnt pacman -S --noconfirm networkmanager; then
+                echo "error: NetworkManager installation failed"
+                exit 1
+            fi
+            arch-chroot /mnt systemctl enable NetworkManager
+
+            echo "NetworkManager installed"
+            break
+            ;;
+        2)
+            echo "enable systemd-networkd and systemd-resolved..."
+            arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved
+
+            # 配置 DNS
+            rm -f /mnt/etc/resolv.conf
+            arch-chroot /mnt ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+            # 询问是否需要无线网络支持
+            read -p "need wireless support? (y/n) " wireless_support
+            if [ "$wireless_support" = "y" ] || [ "$wireless_support" = "Y" ]; then
+                echo "install iwd..."
+                if ! arch-chroot /mnt pacman -S --noconfirm iwd; then
+                    echo "error: iwd installation failed"
                     exit 1
                 fi
-                arch-chroot /mnt systemctl enable NetworkManager
+                arch-chroot /mnt systemctl enable iwd
+            fi
 
-                echo "NetworkManager installed"
-                break
-                ;;
-            2)
-                echo "enable systemd-networkd and systemd-resolved..."
-                arch-chroot /mnt systemctl enable systemd-networkd systemd-resolved
+            # 列出可用网卡
+            echo "available network interfaces:"
+            echo "----------------"
+            ip link | grep -E '^[0-9]+: ' | cut -d: -f2 | sed 's/ //g'
+            echo "----------------"
 
-                # 配置 DNS
-                rm -f /mnt/etc/resolv.conf
-                arch-chroot /mnt ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
-                # 询问是否需要无线网络支持
-                read -p "need wireless support? (y/n) " wireless_support
-                if [ "$wireless_support" = "y" ] || [ "$wireless_support" = "Y" ]; then
-                    echo "install iwd..."
-                    if ! arch-chroot /mnt pacman -S --noconfirm iwd; then
-                        echo "error: iwd installation failed"
-                        exit 1
-                    fi
-                    arch-chroot /mnt systemctl enable iwd
-                fi
-
-                # 列出可用网卡
-                echo "available network interfaces:"
-                echo "----------------"
-                ip link | grep -E '^[0-9]+: ' | cut -d: -f2 | sed 's/ //g'
-                echo "----------------"
-
-                # 让用户选择网卡
-                while true; do
-                    read -p "please input the network interface name: " interface_name
-                    if ip link show "$interface_name" >/dev/null 2>&1; then
-                        break
-                    else
-                        echo "error: invalid network interface, please choose again"
-                    fi
-                done
-
-                # 判断是否为无线网卡
-                if [[ "$interface_name" == wl* ]]; then
-                    config_file="/mnt/etc/systemd/network/10-wireless.network"
+            # 让用户选择网卡
+            interfaces=($(ip -o link show | awk -F': ' '{print $2}'))
+            echo "Available network interfaces:"
+            for i in "${!interfaces[@]}"; do
+                echo "$((i + 1)). ${interfaces[$i]}"
+            done
+            while true; do
+                read -p "please select the network interface by number: " idx
+                if [[ "$idx" =~ ^[0-9]+$ ]] && ((idx >= 1 && idx <= ${#interfaces[@]})); then
+                    interface_name="${interfaces[$((idx - 1))]}"
+                    break
                 else
-                    config_file="/mnt/etc/systemd/network/10-wired.network"
+                    echo "error: invalid selection, please choose again"
                 fi
+            done
 
-                # 创建网络配置文件
-                mkdir -p /mnt/etc/systemd/network
-                cat > "$config_file" << EOF
+            # 判断是否为无线网卡
+            if [[ "$interface_name" == wl* ]]; then
+                config_file="/mnt/etc/systemd/network/10-wireless.network"
+            else
+                config_file="/mnt/etc/systemd/network/10-wired.network"
+            fi
+
+            # 创建网络配置文件
+            mkdir -p /mnt/etc/systemd/network
+            cat >"$config_file" <<EOF
 [Match]
 Name=$interface_name
 
@@ -345,12 +359,12 @@ DHCP=yes
 DNS=223.5.5.5
 DNS=119.29.29.29
 EOF
-                echo "create network configuration file: $config_file"
-                break
-                ;;
-            *)
-                echo "error: invalid choice, please choose again"
-                ;;
+            echo "create network configuration file: $config_file"
+            break
+            ;;
+        *)
+            echo "error: invalid choice, please choose again"
+            ;;
         esac
     done
 
@@ -369,8 +383,8 @@ setup_localization() {
 
     # 修改 locale.gen
     echo "configure locale.gen..."
-    if ! sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen || \
-       ! sed -i 's/#zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /mnt/etc/locale.gen; then
+    if ! sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen ||
+        ! sed -i 's/#zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /mnt/etc/locale.gen; then
         echo "error: configure locale.gen failed"
         exit 1
     fi
@@ -384,7 +398,7 @@ setup_localization() {
 
     # 创建 locale.conf
     echo "create locale.conf..."
-    echo "LANG=en_US.UTF-8" > /mnt/etc/locale.conf
+    echo "LANG=en_US.UTF-8" >/mnt/etc/locale.conf
 
     # 配置控制台字体
     echo "configure console font..."
@@ -395,7 +409,7 @@ setup_localization() {
 
     # 创建 vconsole.conf
     echo "create vconsole.conf..."
-    cat > /mnt/etc/vconsole.conf << EOF
+    cat >/mnt/etc/vconsole.conf <<EOF
 FONT=ter-u16n
 FONT_MAP=8859-2
 EOF
@@ -413,11 +427,11 @@ setup_hostname() {
 
     # 创建 hostname 文件
     echo "set hostname to: $hostname"
-    echo "$hostname" > /mnt/etc/hostname
+    echo "$hostname" >/mnt/etc/hostname
 
     # 配置 hosts 文件
     echo "configure hosts file..."
-    cat > /mnt/etc/hosts << EOF
+    cat >/mnt/etc/hosts <<EOF
 127.0.0.1   localhost
 ::1         localhost
 127.0.1.1   $hostname.localdomain
@@ -435,10 +449,10 @@ setup_uki() {
     mkdir -p /mnt/etc/cmdline.d || echo "cannot create cmdline.d directory"
 
     # 创建 kernel cmdline
-    echo "root=UUID=$(blkid -s UUID -o value ${ROOT_PARTITION}) rw rootflags=atgc quiet" > /mnt/etc/cmdline.d/root.conf || echo "cannot create kernel cmdline"
+    echo "root=UUID=$(blkid -s UUID -o value ${ROOT_PARTITION}) rw rootflags=atgc quiet" >/mnt/etc/cmdline.d/root.conf || echo "cannot create kernel cmdline"
 
     # 创建 mkinitcpio preset
-    cat > /mnt/etc/mkinitcpio.d/linux.preset << EOF
+    cat >/mnt/etc/mkinitcpio.d/linux.preset <<EOF
 # mkinitcpio preset file for the 'linux' package
 
 #ALL_config="/etc/mkinitcpio.conf"
@@ -476,7 +490,7 @@ setup_systemd_boot() {
     mkdir -p /mnt/boot/loader/entries
 
     # 创建 loader.conf
-    cat > /mnt/boot/loader/loader.conf << EOF
+    cat >/mnt/boot/loader/loader.conf <<EOF
 default  arch.conf
 timeout  3
 console-mode max
@@ -484,7 +498,7 @@ editor   no
 EOF
 
     # 创建 arch.conf
-    cat > /mnt/boot/loader/entries/arch.conf << EOF
+    cat >/mnt/boot/loader/entries/arch.conf <<EOF
 title   Arch Linux
 linux   /vmlinuz-linux
 initrd  /initramfs-linux.img
@@ -531,21 +545,21 @@ setup_bootloader() {
         read -p "please choose a bootloader (1-3): " bootloader_choice
 
         case ${bootloader_choice:-1} in
-            1)
-                setup_uki
-                break
-                ;;
-            2)
-                setup_systemd_boot
-                break
-                ;;
-            3)
-                setup_grub "$DISK"
-                break
-                ;;
-            *)
-                echo "error: invalid choice, please choose again"
-                ;;
+        1)
+            setup_uki
+            break
+            ;;
+        2)
+            setup_systemd_boot
+            break
+            ;;
+        3)
+            setup_grub "$DISK"
+            break
+            ;;
+        *)
+            echo "error: invalid choice, please choose again"
+            ;;
         esac
     done
 }
@@ -561,19 +575,19 @@ install_microcode() {
         read -p "please choose your CPU manufacturer (1 or 2): " cpu_choice
 
         case $cpu_choice in
-            1)
-                echo "install Intel CPU microcode..."
-                arch-chroot /mnt pacman -S --noconfirm intel-ucode
-                break
-                ;;
-            2)
-                echo "install AMD CPU microcode..."
-                arch-chroot /mnt pacman -S --noconfirm amd-ucode
-                break
-                ;;
-            *)
-                echo "error: invalid choice, please choose again"
-                ;;
+        1)
+            echo "install Intel CPU microcode..."
+            arch-chroot /mnt pacman -S --noconfirm intel-ucode
+            break
+            ;;
+        2)
+            echo "install AMD CPU microcode..."
+            arch-chroot /mnt pacman -S --noconfirm amd-ucode
+            break
+            ;;
+        *)
+            echo "error: invalid choice, please choose again"
+            ;;
         esac
     done
 
@@ -589,18 +603,18 @@ setup_nvidia() {
     read -p "please choose NVIDIA driver (1-3): " nvidia_choice
 
     case "${nvidia_choice:-1}" in
-        2)
-            echo "install nvidia-open driver..."
-            arch-chroot /mnt pacman -S --noconfirm nvidia-open nvidia-utils nvidia-settings
-            ;;
-        3)
-            echo "install nvidia driver..."
-            arch-chroot /mnt pacman -S --noconfirm nvidia nvidia-utils nvidia-settings
-            ;;
-        *)
-            echo "skip NVIDIA driver installation!!!"
-            return
-            ;;
+    2)
+        echo "install nvidia-open driver..."
+        arch-chroot /mnt pacman -S --noconfirm nvidia-open nvidia-utils nvidia-settings
+        ;;
+    3)
+        echo "install nvidia driver..."
+        arch-chroot /mnt pacman -S --noconfirm nvidia nvidia-utils nvidia-settings
+        ;;
+    *)
+        echo "skip NVIDIA driver installation!!!"
+        return
+        ;;
     esac
 
     # 配置 mkinitcpio.conf
@@ -611,20 +625,20 @@ setup_nvidia() {
     local kernel_params="ibt=off nvidia_drm.modeset=1"
 
     case "${bootloader_choice:-1}" in
-        "systemd-boot")
-            # 更新 systemd-boot 配置
-            sed -i "/^options/ s|$| ${kernel_params}|" /mnt/boot/loader/entries/arch.conf
-            ;;
-        "grub")
-            # 更新 GRUB 配置
-            sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"${kernel_params} |" /mnt/etc/default/grub
-            arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
-            ;;
-        "uki")
-            # 更新 UKI 配置
-            mkdir -p /mnt/etc/cmdline.d
-            echo "${kernel_params}" > /mnt/etc/cmdline.d/nvidia.conf
-            ;;
+    "systemd-boot")
+        # 更新 systemd-boot 配置
+        sed -i "/^options/ s|$| ${kernel_params}|" /mnt/boot/loader/entries/arch.conf
+        ;;
+    "grub")
+        # 更新 GRUB 配置
+        sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"${kernel_params} |" /mnt/etc/default/grub
+        arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+        ;;
+    "uki")
+        # 更新 UKI 配置
+        mkdir -p /mnt/etc/cmdline.d
+        echo "${kernel_params}" >/mnt/etc/cmdline.d/nvidia.conf
+        ;;
     esac
 
     # 重新生成 initramfs
@@ -633,12 +647,22 @@ setup_nvidia() {
     echo "NVIDIA driver setup completed!!!"
 }
 
+config_pacman() {
+    echo "configure pacman..."
+    # shellcheck disable=SC2154
+    arch-chroot /mnt sed -i "/^#Color/c\Color\nILoveCandy
+    /^#VerbosePkgLists/c\VerbosePkgLists" /etc/pacman.conf
+    arch-chroot /mnt sed -i "/^#ParallelDownloads/c\ParallelDownloads = 5" /etc/pacman.conf
+    # arch-chroot /mnt sed -i '/^#\[multilib\]/,+1 s/^#//' /etc/pacman.conf
+    echo "pacman configured!!!"
+}
+
 # 配置archlinuxcn源
 setup_archlinuxcn() {
     echo "setup archlinuxcn..."
 
     # 添加archlinuxcn源
-    cat >> /mnt/etc/pacman.conf << EOF
+    cat >>/mnt/etc/pacman.conf <<EOF
 
 [archlinuxcn]
 SigLevel = Optional TrustAll
@@ -680,7 +704,7 @@ setup_users() {
 
     # 创建新用户
     echo "create user: $username..."
-    if ! arch-chroot /mnt useradd -m -G wheel -s /bin/zsh "$username"; then
+    if ! arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$username"; then
         echo "error: create user failed"
         exit 1
     fi
@@ -770,13 +794,22 @@ setup_user_dirs() {
 # 生成 fstab
 generate_fstab() {
     echo "generate fstab..."
-    genfstab -U /mnt >> /mnt/etc/fstab
+    genfstab -U /mnt >>/mnt/etc/fstab
     echo "fstab generated!!!"
 }
 
 # 开始安装过程
 main() {
-    local total_steps=14
+    # 设置清理钩子
+    trap cleanup EXIT
+
+    # 检查是否以 root 权限运行
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "error：must be run as root"
+        exit 1
+    fi
+
+    local total_steps=15
     local current_step=0
 
     echo "begin installation..."
@@ -827,6 +860,10 @@ main() {
     # 安装NVIDIA驱动
     show_progress $((++current_step)) "$total_steps" "setup NVIDIA driver"
     setup_nvidia
+
+    # 配置 pacman
+    show_progress $((++current_step)) "$total_steps" "config pacman"
+    config_pacman
 
     # 配置archlinuxcn源
     show_progress $((++current_step)) "$total_steps" "setup archlinuxcn"
