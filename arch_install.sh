@@ -74,7 +74,6 @@ update_mirrors() {
 
     # 写入新的镜像源
     cat >/etc/pacman.d/mirrorlist <<EOF
-Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.ustc.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.xjtu.edu.cn/archlinux/\$repo/os/\$arch
 Server = https://mirrors.jlu.edu.cn/archlinux/\$repo/os/\$arch
@@ -318,12 +317,6 @@ setup_network() {
                 fi
                 arch-chroot /mnt systemctl enable iwd
             fi
-
-            # 列出可用网卡
-            echo "available network interfaces:"
-            echo "----------------"
-            ip link | grep -E '^[0-9]+: ' | cut -d: -f2 | sed 's/ //g'
-            echo "----------------"
 
             # 让用户选择网卡
             interfaces=($(ip -o link show | awk -F': ' '{print $2}'))
